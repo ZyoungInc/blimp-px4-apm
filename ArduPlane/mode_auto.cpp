@@ -1,6 +1,27 @@
 #include "mode.h"
 #include "Plane.h"
 
+bool ModeAuto::airship_mission_is_valid(uint16_t &bad_index, uint16_t &bad_id) const
+{
+    const uint16_t num_commands = plane.mission.num_commands();
+    if (num_commands <= 1) {
+        bad_index = 0;
+        bad_id = 0;
+        return false;
+    }
+
+    for (uint16_t i = 1; i < num_commands; i++) {
+        AP_Mission::Mission_Command cmd{};
+        if (!plane.mission.read_cmd_from_storage(i, cmd) ||
+            cmd.id != MAV_CMD_NAV_WAYPOINT) {
+            bad_index = i;
+            bad_id = cmd.id;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ModeAuto::_enter()
 {
 #if HAL_QUADPLANE_ENABLED
@@ -30,6 +51,21 @@ bool ModeAuto::_enter()
     plane.auto_state.vtol_mode = false;
 #endif
     plane.next_WP_loc = plane.prev_WP_loc = plane.current_loc;
+
+    if (plane.g2.airship_controller.enabled()) {
+        plane.g2.airship_controller.clear_rtl_request();
+        airship_mission_change_ms = plane.mission.last_change_time_ms();
+        uint16_t bad_index;
+        uint16_t bad_id;
+        if (!airship_mission_is_valid(bad_index, bad_id)) {
+            GCS_SEND_TEXT(MAV_SEVERITY_ERROR,
+                          "Airship: mission item %u command %u unsupported",
+                          unsigned(bad_index), unsigned(bad_id));
+            plane.g2.airship_controller.request_rtl();
+            return true;
+        }
+    }
+
     // start or resume the mission, based on MIS_AUTORESET
     plane.mission.start_or_resume();
 
@@ -50,6 +86,12 @@ bool ModeAuto::_enter()
 
 void ModeAuto::_exit()
 {
+    if (plane.control_mode != &plane.mode_loiter &&
+        plane.control_mode != &plane.mode_rtl &&
+        plane.control_mode != &plane.mode_auto) {
+        plane.g2.airship_controller.leave();
+    }
+
     if (plane.mission.state() == AP_Mission::MISSION_RUNNING) {
         plane.mission.stop();
 
@@ -68,11 +110,24 @@ void ModeAuto::_exit()
 
 void ModeAuto::update()
 {
+    if (plane.g2.airship_controller.enabled() &&
+        plane.g2.airship_controller.rtl_requested()) {
+        plane.set_mode(plane.mode_rtl, ModeReason::MISSION_CMD);
+        return;
+    }
+
     if (plane.mission.state() != AP_Mission::MISSION_RUNNING) {
         // this could happen if AP_Landing::restart_landing_sequence() returns false which would only happen if:
         // restart_landing_sequence() is called when not executing a NAV_LAND or there is no previous nav point
         plane.set_mode(plane.mode_rtl, ModeReason::MISSION_END);
         gcs().send_text(MAV_SEVERITY_INFO, "Aircraft in auto without a running mission");
+        return;
+    }
+
+    if (plane.g2.airship_controller.enabled()) {
+        plane.g2.airship_controller.update();
+        plane.throttle_suppressed = false;
+        SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, plane.g2.airship_controller.throttle_pct());
         return;
     }
 
@@ -129,6 +184,20 @@ void ModeAuto::update()
 
 void ModeAuto::navigate()
 {
+    if (plane.g2.airship_controller.enabled() &&
+        airship_mission_change_ms != plane.mission.last_change_time_ms()) {
+        airship_mission_change_ms = plane.mission.last_change_time_ms();
+        uint16_t bad_index;
+        uint16_t bad_id;
+        if (!airship_mission_is_valid(bad_index, bad_id)) {
+            GCS_SEND_TEXT(MAV_SEVERITY_ERROR,
+                          "Airship: mission item %u command %u unsupported",
+                          unsigned(bad_index), unsigned(bad_id));
+            plane.g2.airship_controller.request_rtl();
+            return;
+        }
+    }
+
     if (AP::ahrs().home_is_set()) {
         plane.mission.update();
     }
@@ -178,6 +247,13 @@ bool ModeAuto::is_landing() const
 
 void ModeAuto::run()
 {
+    if (plane.g2.airship_controller.enabled()) {
+        plane.stabilize_roll();
+        plane.stabilize_pitch();
+        SRV_Channels::set_output_scaled(SRV_Channel::k_rudder, plane.g2.airship_controller.rudder_cd());
+        return;
+    }
+
 #if AP_PLANE_GLIDER_PULLUP_ENABLED
     if (pullup.in_pullup()) {
         pullup.stabilize_pullup();

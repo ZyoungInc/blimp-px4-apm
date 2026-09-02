@@ -222,6 +222,9 @@ void Plane::ahrs_update()
 void Plane::update_speed_height(void)
 {
     bool should_run_tecs = control_mode->does_auto_throttle();
+    if (g2.airship_controller.active()) {
+        should_run_tecs = false;
+    }
 #if HAL_QUADPLANE_ENABLED
     if (quadplane.should_disable_TECS()) {
         should_run_tecs = false;
@@ -365,7 +368,14 @@ void Plane::one_second_loop()
     set_control_channels();
 
 #if HAL_WITH_IO_MCU
-    iomcu.setup_mixing(g.override_channel.get(), g.mixing_gain, g2.manual_rc_mask);
+    if (g2.airship_controller.enabled()) {
+        // The IO firmware only knows the standard fixed-wing V-tail mixer,
+        // not the airship cross-tail/tilt layout.  On an FMU failure use the
+        // configured safe PWM values instead of applying the wrong axes.
+        iomcu.disable_mixing();
+    } else {
+        iomcu.setup_mixing(g.override_channel.get(), g.mixing_gain, g2.manual_rc_mask);
+    }
 #endif
 
 #if HAL_ADSB_ENABLED
@@ -528,6 +538,11 @@ void Plane::update_control_mode(void)
 
 void Plane::update_fly_forward(void)
 {
+    if (g2.airship_controller.enabled()) {
+        ahrs.set_fly_forward(false);
+        return;
+    }
+
     // ensure we are fly-forward when we are flying as a pure fixed
     // wing aircraft. This helps the EKF produce better state
     // estimates as it can make stronger assumptions
@@ -633,6 +648,9 @@ void Plane::update_alt()
 #endif
 
     bool should_run_tecs = control_mode->does_auto_throttle();
+    if (g2.airship_controller.active()) {
+        should_run_tecs = false;
+    }
 #if HAL_QUADPLANE_ENABLED
     if (quadplane.should_disable_TECS()) {
         should_run_tecs = false;

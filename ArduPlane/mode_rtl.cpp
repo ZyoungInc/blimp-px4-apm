@@ -4,6 +4,22 @@
 bool ModeRTL::_enter()
 {
     plane.prev_WP_loc = plane.current_loc;
+    if (plane.g2.airship_controller.enabled()) {
+        // Avoid using home.alt before Home exists.  AirshipController locks
+        // the final max(current, Home+RTL_ALTITUDE) target once both Home and
+        // a valid vertical estimate are available.
+        if (AP::ahrs().home_is_set()) {
+            const int32_t rtl_altitude_cm = MAX(plane.current_loc.alt,
+                                                plane.get_RTL_altitude_cm());
+            plane.do_RTL(rtl_altitude_cm);
+        } else {
+            plane.next_WP_loc = plane.current_loc;
+        }
+        plane.rtl.done_climb = false;
+        plane.g2.airship_controller.enter_rtl();
+        return true;
+    }
+
     plane.do_RTL(plane.get_RTL_altitude_cm());
     plane.rtl.done_climb = false;
 #if HAL_QUADPLANE_ENABLED
@@ -40,8 +56,24 @@ bool ModeRTL::_enter()
     return true;
 }
 
+void ModeRTL::_exit()
+{
+    if (plane.control_mode != &plane.mode_loiter &&
+        plane.control_mode != &plane.mode_rtl &&
+        plane.control_mode != &plane.mode_auto) {
+        plane.g2.airship_controller.leave();
+    }
+}
+
 void ModeRTL::update()
 {
+    if (plane.g2.airship_controller.enabled()) {
+        plane.g2.airship_controller.update();
+        plane.throttle_suppressed = false;
+        SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, plane.g2.airship_controller.throttle_pct());
+        return;
+    }
+
     plane.calc_nav_roll();
     plane.calc_nav_pitch();
     plane.calc_throttle();
@@ -74,8 +106,24 @@ void ModeRTL::update()
     }
 }
 
+void ModeRTL::run()
+{
+    if (!plane.g2.airship_controller.enabled()) {
+        Mode::run();
+        return;
+    }
+
+    plane.stabilize_roll();
+    plane.stabilize_pitch();
+    SRV_Channels::set_output_scaled(SRV_Channel::k_rudder, plane.g2.airship_controller.rudder_cd());
+}
+
 void ModeRTL::navigate()
 {
+    if (plane.g2.airship_controller.enabled()) {
+        return;
+    }
+
 #if HAL_QUADPLANE_ENABLED
     if (plane.quadplane.available()) {
         if (plane.quadplane.rtl_mode == QuadPlane::RTL_MODE::VTOL_APPROACH_QRTL) {

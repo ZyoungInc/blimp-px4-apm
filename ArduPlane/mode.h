@@ -307,6 +307,9 @@ protected:
 
 private:
 
+    bool airship_mission_is_valid(uint16_t &bad_index, uint16_t &bad_id) const;
+    uint32_t airship_mission_change_ms = 0;
+
     // Delay the next navigation command
     struct {
         uint32_t time_max_ms;
@@ -437,6 +440,8 @@ public:
     // methods that affect movement of the vehicle in this mode
     void update() override;
 
+    void run() override;
+
     void navigate() override;
 
     bool isHeadingLinedUp(const Location loiterCenterLoc, const Location targetLoc);
@@ -463,6 +468,7 @@ public:
 protected:
 
     bool _enter() override;
+    void _exit() override;
 };
 
 #if HAL_QUADPLANE_ENABLED
@@ -526,6 +532,8 @@ public:
     // methods that affect movement of the vehicle in this mode
     void update() override;
 
+    void run() override;
+
     void navigate() override;
 
     bool allows_throttle_nudging() const override { return true; }
@@ -537,6 +545,7 @@ public:
 protected:
 
     bool _enter() override;
+    void _exit() override;
     bool _pre_arm_checks(size_t buflen, char *buffer) const override { return false; }
 
 private:

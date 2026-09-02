@@ -158,6 +158,10 @@ public:
     bool setup_mixing(int8_t override_chan,
                       float mixing_gain, uint16_t manual_rc_mask);
 
+    // Disable the IO-side fixed-wing failsafe mixer.  Outputs then use their
+    // configured failsafe PWM if the FMU stops updating them.
+    bool disable_mixing();
+
     // Check if pin number is valid and configured for GPIO
     bool valid_GPIO_pin(uint8_t pin) const;
 

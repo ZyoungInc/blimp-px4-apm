@@ -1289,6 +1289,20 @@ bool AP_IOMCU::setup_mixing(int8_t override_chan,
     return true;
 }
 
+bool AP_IOMCU::disable_mixing()
+{
+    // Do not infer the IO firmware's state from this FMU-side structure: an
+    // FMU-only reboot creates a fresh zeroed object while IO may still retain
+    // an enabled mixer from the previous firmware.  Queue the write even if
+    // protocol detection has not completed; the IO thread processes INIT
+    // before MIXING.  Reassert it periodically to cover later IO resets too.
+    mixing.enabled = 0;
+    mixing.rc_chan_override = 0;
+    mixing.manual_rc_mask = 0;
+    trigger_event(IOEVENT_MIXING);
+    return is_chibios_backend;
+}
+
 /*
   return the RC protocol name
  */

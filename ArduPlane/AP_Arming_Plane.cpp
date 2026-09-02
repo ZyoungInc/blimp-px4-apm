@@ -105,6 +105,8 @@ bool AP_Arming_Plane::pre_arm_checks(bool display_failure)
 
     ret &= rc_received_if_enabled_check(display_failure);
 
+    ret &= airship_checks(display_failure);
+
 #if HAL_QUADPLANE_ENABLED
     ret &= quadplane_checks(display_failure);
 #endif
@@ -147,7 +149,22 @@ bool AP_Arming_Plane::mandatory_checks(bool display_failure)
     // Call parent class checks
     ret &= AP_Arming::mandatory_checks(display_failure);
 
+    // Airship output/mode constraints cannot be bypassed with ARMING_CHECK=0
+    // or a force-arm request.
+    ret &= airship_checks(display_failure);
+
     return ret;
+}
+
+bool AP_Arming_Plane::airship_checks(const bool display_failure)
+{
+    char failure_msg[80] {};
+    if (plane.g2.airship_controller.pre_arm_check(failure_msg,
+                                                  ARRAY_SIZE(failure_msg))) {
+        return true;
+    }
+    check_failed(Check::PARAMETERS, display_failure, "%s", failure_msg);
+    return false;
 }
 
 
@@ -283,6 +300,10 @@ void AP_Arming_Plane::change_arm_state(void)
 
 bool AP_Arming_Plane::arm(const AP_Arming::Method method, const bool do_arming_checks)
 {
+    if (!airship_checks(true)) {
+        return false;
+    }
+
     if (!AP_Arming::arm(method, do_arming_checks)) {
         return false;
     }

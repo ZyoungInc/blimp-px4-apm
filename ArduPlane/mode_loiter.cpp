@@ -3,6 +3,12 @@
 
 bool ModeLoiter::_enter()
 {
+    if (plane.g2.airship_controller.enabled()) {
+        plane.next_WP_loc = plane.current_loc;
+        plane.g2.airship_controller.enter_poshold();
+        return true;
+    }
+
     plane.do_loiter_at_location();
     plane.setup_terrain_target_alt(plane.next_WP_loc);
 
@@ -18,8 +24,24 @@ bool ModeLoiter::_enter()
     return true;
 }
 
+void ModeLoiter::_exit()
+{
+    if (plane.control_mode != &plane.mode_loiter &&
+        plane.control_mode != &plane.mode_rtl &&
+        plane.control_mode != &plane.mode_auto) {
+        plane.g2.airship_controller.leave();
+    }
+}
+
 void ModeLoiter::update()
 {
+    if (plane.g2.airship_controller.enabled()) {
+        plane.g2.airship_controller.update();
+        plane.throttle_suppressed = false;
+        SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, plane.g2.airship_controller.throttle_pct());
+        return;
+    }
+
     plane.calc_nav_roll();
     if (plane.stick_mixing_enabled() && plane.flight_option_enabled(FlightOptions::ENABLE_LOITER_ALT_CONTROL)) {
         plane.update_fbwb_speed_height();
@@ -35,6 +57,18 @@ void ModeLoiter::update()
         plane.next_WP_loc.set_alt_cm(plane.target_altitude.amsl_cm, Location::AltFrame::ABSOLUTE);
     }
 #endif
+}
+
+void ModeLoiter::run()
+{
+    if (!plane.g2.airship_controller.enabled()) {
+        Mode::run();
+        return;
+    }
+
+    plane.stabilize_roll();
+    plane.stabilize_pitch();
+    SRV_Channels::set_output_scaled(SRV_Channel::k_rudder, plane.g2.airship_controller.rudder_cd());
 }
 
 bool ModeLoiter::isHeadingLinedUp(const Location loiterCenterLoc, const Location targetLoc)
@@ -136,6 +170,10 @@ bool ModeLoiter::isHeadingLinedUp_cd(const int32_t bearing_cd, const int32_t hea
 
 void ModeLoiter::navigate()
 {
+    if (plane.g2.airship_controller.enabled()) {
+        return;
+    }
+
     if (plane.flight_option_enabled(FlightOptions::ENABLE_LOITER_ALT_CONTROL)) {
         // update the WP alt from the global target adjusted by update_fbwb_speed_height
         plane.next_WP_loc.set_alt_cm(plane.target_altitude.amsl_cm, Location::AltFrame::ABSOLUTE);

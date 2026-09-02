@@ -3,6 +3,7 @@
 #define AP_PARAM_VEHICLE_NAME plane
 
 #include <AP_Common/AP_Common.h>
+#include "airship_controller.h"
 
 // Global parameter class.
 //
@@ -593,6 +594,9 @@ public:
 #if AP_PLANE_SYSTEMID_ENABLED
     AP_SystemID systemid;
 #endif
+
+    // Low-energy position, RTL and waypoint controller for the demo airship.
+    AirshipController airship_controller;
 };
 
 extern const AP_Param::Info var_info[];

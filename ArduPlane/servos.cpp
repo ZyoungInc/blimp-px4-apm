@@ -780,6 +780,9 @@ void Plane::servos_twin_engine_mix(void)
     float throttle = SRV_Channels::get_output_scaled(SRV_Channel::k_throttle);
     float rud_gain = float(plane.g2.rudd_dt_gain) * 0.01f;
     rudder_dt = rud_gain * SRV_Channels::get_output_scaled(SRV_Channel::k_rudder) / SERVO_MAX;
+    if (g2.airship_controller.enabled()) {
+        rudder_dt *= sinf(radians(g2.airship_controller.tilt_deg()));
+    }
 
 #if AP_ADVANCEDFAILSAFE_ENABLED
     if (afs.should_crash_vehicle()) {
@@ -1032,21 +1035,52 @@ void Plane::servos_output(void)
     auto &srv = AP::srv();
     srv.cork();
 
+    if (g2.airship_controller.enabled()) {
+        if (!g2.airship_controller.arming_configuration_valid()) {
+            // ARMING_REQUIRE=0 (and the auto-arm variants) bypass the normal
+            // Plane arming callbacks.  Never let that bypass energise this
+            // experimental output layout.
+            SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, 0.0f);
+            SRV_Channels::set_output_scaled(SRV_Channel::k_aileron, 0.0f);
+            SRV_Channels::set_output_scaled(SRV_Channel::k_elevator, 0.0f);
+            SRV_Channels::set_output_scaled(SRV_Channel::k_rudder, 0.0f);
+            g2.airship_controller.reset_to_vertical();
+        } else if (!arming.is_armed_and_safety_off()) {
+            g2.airship_controller.reset_to_vertical();
+        } else if (control_mode == &mode_manual || control_mode == &mode_fbwa) {
+            g2.airship_controller.manual_tilt_update();
+        } else if (control_mode != &mode_loiter &&
+                   control_mode != &mode_rtl &&
+                   control_mode != &mode_auto) {
+            g2.airship_controller.reset_to_vertical();
+        }
+        SRV_Channels::set_output_scaled(SRV_Channel::k_tiltMotorLeft,
+                                        g2.airship_controller.tilt_servo_cd());
+    }
+
     // support twin-engine aircraft
     servos_twin_engine_mix();
 
     // run vtail and elevon mixers
     channel_function_mixer(SRV_Channel::k_aileron, SRV_Channel::k_elevator, SRV_Channel::k_elevon_left, SRV_Channel::k_elevon_right);
-    channel_function_mixer(SRV_Channel::k_rudder,  SRV_Channel::k_elevator, SRV_Channel::k_vtail_right, SRV_Channel::k_vtail_left);
+    if (g2.airship_controller.enabled()) {
+        channel_function_mixer(SRV_Channel::k_aileron, SRV_Channel::k_rudder, SRV_Channel::k_vtail_right, SRV_Channel::k_vtail_left);
+    } else {
+        channel_function_mixer(SRV_Channel::k_rudder, SRV_Channel::k_elevator, SRV_Channel::k_vtail_right, SRV_Channel::k_vtail_left);
+    }
 
 #if HAL_QUADPLANE_ENABLED
     // cope with tailsitters and bicopters
-    quadplane.tailsitter.output();
-    quadplane.tiltrotor.bicopter_output();
+    if (!g2.airship_controller.enabled()) {
+        quadplane.tailsitter.output();
+        quadplane.tiltrotor.bicopter_output();
+    }
 #endif
 
-    // support forced flare option
-    force_flare();
+    // forced flare writes the same tilt functions used by the airship
+    if (!g2.airship_controller.enabled()) {
+        force_flare();
+    }
 
     // implement differential spoilers
     dspoiler_update();
@@ -1055,12 +1089,14 @@ void Plane::servos_output(void)
     landing_neutral_control_surface_servos();
     
     // set rudder arm waiting for neutral control throws (rudder neutral, aileron/rt vtail/rt elevon to full right)
-    if (flight_option_enabled(FlightOptions::INDICATE_WAITING_FOR_RUDDER_NEUTRAL)) {
+    if (!g2.airship_controller.enabled() &&
+        flight_option_enabled(FlightOptions::INDICATE_WAITING_FOR_RUDDER_NEUTRAL)) {
         indicate_waiting_for_rud_neutral_to_takeoff();
     }
 
     // support MANUAL_RCMASK
-    if (g2.manual_rc_mask.get() != 0 && control_mode == &mode_manual) {
+    if (!g2.airship_controller.enabled() &&
+        g2.manual_rc_mask.get() != 0 && control_mode == &mode_manual) {
         SRV_Channels::copy_radio_in_out_mask(uint32_t(g2.manual_rc_mask.get()));
     }
 
@@ -1070,7 +1106,7 @@ void Plane::servos_output(void)
 
     srv.push();
 
-    if (g2.servo_channels.auto_trim_enabled()) {
+    if (!g2.airship_controller.enabled() && g2.servo_channels.auto_trim_enabled()) {
         servos_auto_trim();
     }
 }

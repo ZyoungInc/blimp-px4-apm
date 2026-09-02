@@ -49,6 +49,7 @@ protected:
     bool rc_received_if_enabled_check(bool display_failure);
 
 private:
+    bool airship_checks(bool display_failure);
     void change_arm_state(void);
 
     // oneshot with duration AP_ARMING_DELAY_MS used by quadplane to delay spoolup after arming:

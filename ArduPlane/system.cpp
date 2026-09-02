@@ -2,6 +2,11 @@
 
 #include "qautotune.h"
 
+#if HAL_WITH_IO_MCU
+#include <AP_IOMCU/AP_IOMCU.h>
+extern AP_IOMCU iomcu;
+#endif
+
 static void failsafe_check_static()
 {
     plane.failsafe_check();
@@ -9,6 +14,15 @@ static void failsafe_check_static()
 
 void Plane::init_ardupilot()
 {
+#if HAL_WITH_IO_MCU
+    // Persistent parameters are already loaded before init_ardupilot().  Stop
+    // a mixer retained by IO from an earlier normal-Plane firmware before any
+    // sensor startup delay can cross IO's FMU-loss timeout.  A defaults-file
+    // AIR_ENABLE is confirmed again after reload below.
+    if (g2.airship_controller.enable_requested()) {
+        iomcu.disable_mixing();
+    }
+#endif
 
     ins.set_log_raw_bit(MASK_LOG_IMU_RAW);
 
@@ -94,6 +108,18 @@ void Plane::init_ardupilot()
 #endif
 
     AP_Param::reload_defaults_file(true);
+
+    // AIR_ENABLE selects a mutually exclusive controller and output mixer.
+    // Latch it only after all stored/default-file parameters have loaded so a
+    // live parameter write cannot change control paths until the next reboot.
+    g2.airship_controller.latch_enable_at_boot();
+#if HAL_WITH_IO_MCU
+    if (g2.airship_controller.enabled()) {
+        // Close the FMU-restart window before lengthy sensor startup.  The
+        // one-second task keeps reasserting this if either MCU resets later.
+        iomcu.disable_mixing();
+    }
+#endif
 
     // ALT_OFFSET always starts at zero, independently of FLIGHT_OPTIONS.
     reset_alt_offset(true);
@@ -253,6 +279,38 @@ bool Plane::set_mode(Mode &new_mode, const ModeReason reason)
             AP_Notify::events.user_mode_change = 1;
         }
         return true;
+    }
+
+    if (g2.airship_controller.enabled()) {
+        const bool airship_mode_allowed =
+            &new_mode == &mode_initializing ||
+            &new_mode == &mode_manual ||
+            &new_mode == &mode_fbwa ||
+            &new_mode == &mode_loiter ||
+            &new_mode == &mode_rtl ||
+            &new_mode == &mode_auto;
+
+        if (!airship_mode_allowed) {
+            if (control_mode == &mode_initializing) {
+                gcs().send_text(MAV_SEVERITY_WARNING,
+                                "Airship: initial mode %s unsupported; using MANUAL",
+                                new_mode.name());
+                return set_mode(mode_manual, reason);
+            }
+            if (arming.is_armed()) {
+                gcs().send_text(MAV_SEVERITY_WARNING,
+                                "Airship: mode %s unsupported; using RTL",
+                                new_mode.name());
+                return set_mode(mode_rtl, reason);
+            }
+            gcs().send_text(MAV_SEVERITY_WARNING,
+                            "Airship: mode %s unsupported",
+                            new_mode.name());
+            if (reason != ModeReason::INITIALISED) {
+                AP_Notify::events.user_mode_change_failed = 1;
+            }
+            return false;
+        }
     }
 
 #if HAL_QUADPLANE_ENABLED

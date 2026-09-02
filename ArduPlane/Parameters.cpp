@@ -1292,6 +1292,10 @@ const AP_Param::GroupInfo ParametersG2::var_info[] = {
     AP_GROUPINFO("RNGFND_LND_DIST", 41, ParametersG2, rangefinder_land_engage_dist_m, 0),
 #endif
 
+    // @Group: AIR_
+    // @Path: airship_controller.cpp
+    AP_SUBGROUPINFO(airship_controller, "AIR_", 42, ParametersG2, AirshipController),
+
     AP_GROUPEND
 };
 
@@ -1303,6 +1307,7 @@ ParametersG2::ParametersG2(void) :
 #if HAL_SOARING_ENABLED
     ,soaring_controller(plane.TECS_controller, plane.aparm)
 #endif
+    ,airship_controller(plane)
 {
     AP_Param::setup_object_defaults(this, var_info);
 }

@@ -11,6 +11,20 @@ bool Plane::start_command(const AP_Mission::Mission_Command& cmd)
         reset_alt_offset();
     }
 
+    if (g2.airship_controller.enabled() && control_mode == &mode_auto &&
+        AP_Mission::is_nav_cmd(cmd)) {
+        if (cmd.id != MAV_CMD_NAV_WAYPOINT) {
+            GCS_SEND_TEXT(MAV_SEVERITY_ERROR,
+                          "Airship: unsupported AUTO command %u",
+                          unsigned(cmd.id));
+            g2.airship_controller.request_rtl();
+            return false;
+        }
+        do_nav_wp(cmd);
+        g2.airship_controller.enter_auto_target(next_WP_loc);
+        return true;
+    }
+
     // default to non-VTOL loiter
     auto_state.vtol_loiter = false;
 
@@ -345,7 +359,12 @@ void Plane::do_RTL(int32_t rtl_altitude_AMSL_cm)
     auto_state.next_wp_crosstrack = false;
     auto_state.crosstrack = false;
     prev_WP_loc = current_loc;
-    next_WP_loc = calc_best_rally_or_home_location(current_loc, rtl_altitude_AMSL_cm);
+    if (g2.airship_controller.enabled()) {
+        next_WP_loc = home;
+        next_WP_loc.set_alt_cm(rtl_altitude_AMSL_cm, Location::AltFrame::ABSOLUTE);
+    } else {
+        next_WP_loc = calc_best_rally_or_home_location(current_loc, rtl_altitude_AMSL_cm);
+    }
 
     fix_terrain_WP(next_WP_loc, __AP_LINE__);
 
@@ -640,6 +659,10 @@ bool Plane::verify_takeoff()
 bool Plane::verify_nav_wp(const AP_Mission::Mission_Command& cmd)
 {
     steer_state.hold_course_cd = -1;
+
+    if (g2.airship_controller.enabled() && control_mode == &mode_auto) {
+        return g2.airship_controller.verify_waypoint(next_WP_loc);
+    }
 
     // depending on the pass by flag either go to waypoint in regular manner or
     // fly past it for set distance along the line of waypoints
@@ -1353,4 +1376,3 @@ bool Plane::in_auto_mission_id(uint16_t command) const
 {
     return control_mode == &mode_auto && mission.get_current_nav_id() == command;
 }
-
